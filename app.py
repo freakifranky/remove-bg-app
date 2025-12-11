@@ -1,20 +1,12 @@
 import io
 import requests
-from typing import Tuple
+from typing import Optional
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
-# ----------------- CONFIG & DEFAULTS -----------------
+# ---------- Optional background remover ----------
 
-# Overlay defaults (ratios)
-DEFAULT_GAP_RATIO = 0.05                 # 5% side-by-side gap
-DEFAULT_PADDING_RATIO = 0.05             # 5% padding
-DEFAULT_OVERLAY_OFFSET_RATIO = 0.25      # horizontal separation for overlay
-DEFAULT_HERO_SCALE_FACTOR = 0.80         # front pack size vs hero
-DEFAULT_SECONDARY_VERT_OFFSET_RATIO = 0.40  # front pack drop vs padding
-
-# Try to import rembg (optional background removal)
 try:
     from rembg import remove
     HAS_REMBG = True
@@ -23,143 +15,115 @@ except Exception as e:
     HAS_REMBG = False
     REMBG_ERROR = repr(e)
 
+# ---------- Streamlit page setup ----------
 
-# ----------------- PAGE SETUP -----------------
+st.set_page_config(page_title="Image Combiner – Quickcommerce Ready",
+                   layout="centered")
 
-st.set_page_config(page_title="Image Combiner", layout="centered")
 st.title("Image Combiner – Quickcommerce Ready")
 
 st.markdown(
-    "Upload **two product images** (file or URL), choose layout, "
-    "optionally remove backgrounds, and download a 1:1 PNG ready for quickcommerce."
+    "Upload **two SKU images** (file or URL), "
+    "optionally remove background per image, choose layout, "
+    "and download a combined 1:1 image ready for quickcommerce."
 )
 
-# ----------------- INPUTS -----------------
+# ---------- INPUTS ----------
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Image 1")
-    img_file_1 = st.file_uploader("Upload Image 1", type=["png", "jpg", "jpeg"], key="img1")
-    img_url_1 = st.text_input("Or paste Image 1 URL")
+    st.subheader("Image 1 (Hero)")
+    img_file_1 = st.file_uploader(
+        "Upload hero image", type=["png", "jpg", "jpeg"], key="img1"
+    )
+    img_url_1 = st.text_input("Or paste hero image URL")
+    remove_bg_1 = False
+    if HAS_REMBG:
+        remove_bg_1 = st.checkbox("Remove background for hero", value=False)
+    else:
+        st.caption("Background removal unavailable (rembg not installed).")
 
 with col2:
-    st.subheader("Image 2")
-    img_file_2 = st.file_uploader("Upload Image 2", type=["png", "jpg", "jpeg"], key="img2")
-    img_url_2 = st.text_input("Or paste Image 2 URL")
+    st.subheader("Image 2 (Front / Secondary)")
+    img_file_2 = st.file_uploader(
+        "Upload front image", type=["png", "jpg", "jpeg"], key="img2"
+    )
+    img_url_2 = st.text_input("Or paste front image URL")
+    remove_bg_2 = False
+    if HAS_REMBG:
+        remove_bg_2 = st.checkbox("Remove background for front pack", value=False)
+    else:
+        st.caption("Background removal unavailable (rembg not installed).")
 
 st.markdown("---")
 
-# Background removal switches (per image)
-if HAS_REMBG:
-    st.markdown("**Background removal (per image)**")
-    col_rb1, col_rb2 = st.columns(2)
-    with col_rb1:
-        remove_bg_1 = st.checkbox("Remove background for Image 1", value=False)
-    with col_rb2:
-        remove_bg_2 = st.checkbox("Remove background for Image 2", value=False)
-else:
-    remove_bg_1 = remove_bg_2 = False
-    st.info(
-        "Background removal disabled (rembg not available).\n\n"
-        f"_Import error: {REMBG_ERROR}_"
-    )
-
-# Output size
-quality = st.selectbox(
-    "Output size (square, px)",
-    [1000, 1500, 2000, 3000, 4000],
-    index=2,
-    format_func=lambda x: f"{x} × {x} px",
-)
-
-# Background mode
-bg_mode = st.radio(
-    "Background",
-    ["White (#FFFFFF)", "Transparent PNG"],
+layout_mode = st.radio(
+    "Layout",
+    ["Side-by-side", "Overlay (hero + front)"],
     horizontal=True,
 )
 
-# Layout mode
-layout_mode = st.selectbox(
-    "Layout mode",
-    ["Side-by-side", "Overlay (hero + secondary)"],
+# Common controls
+quality = st.selectbox(
+    "Output size (square, px)",
+    [2000, 3000, 4000, 8000, 12000, 16000],
+    index=2,
+    format_func=lambda x: f"{x} x {x} px",
 )
 
-# Side-by-side tuning
-gap_ratio = (
-    st.slider(
+gap_ratio = None
+overlay_distance_ratio = None
+overlay_drop_ratio = None
+overlay_scale_ratio = None
+
+# Side-by-side spacing + padding
+st.markdown("### Global spacing")
+if layout_mode == "Side-by-side":
+    gap_ratio = st.slider(
         "Gap between products (% of canvas width) [side-by-side only]",
-        1,
-        15,
-        int(DEFAULT_GAP_RATIO * 100),
+        0, 15, 4,
+        help="Controls the white gap between the two packs."
     )
-    / 100.0
+
+outer_padding_ratio = st.slider(
+    "Outer padding (left & right, and top & bottom) (% of canvas size)",
+    0, 15, 5,
+    help="Controls the white margin around the packs. 0 = almost full-bleed."
 )
 
-outer_padding_ratio = (
-    st.slider(
-        "Outer padding (left & right, and top & bottom) (% of canvas size)",
-        2,
-        10,
-        int(DEFAULT_PADDING_RATIO * 100),
-        help="Controls white / transparent margin around the products.",
+# Overlay fine-tuning
+if layout_mode == "Overlay (hero + front)":
+    st.markdown("### Overlay fine-tuning")
+    overlay_distance_ratio = st.slider(
+        "Distance between packs (%)",
+        -100, 100, 40,
+        help=(
+            "Horizontal position of the **front** pack relative to center.\n"
+            "0 = centered; positive = move right; negative = move left."
+        ),
     )
-    / 100.0
-)
-
-# Overlay fine-tuning (only when overlay mode is selected)
-overlay_offset_ratio = DEFAULT_OVERLAY_OFFSET_RATIO
-hero_scale_factor = DEFAULT_HERO_SCALE_FACTOR
-secondary_vert_offset_ratio = DEFAULT_SECONDARY_VERT_OFFSET_RATIO
-
-if layout_mode.startswith("Overlay"):
-    st.markdown("**Overlay fine-tuning**")
-
-    col_o1, col_o2 = st.columns(2)
-
-    with col_o1:
-        overlay_offset_ratio = (
-            st.slider(
-                "Distance between packs (%)",
-                5,
-                40,
-                int(DEFAULT_OVERLAY_OFFSET_RATIO * 100),
-                help="Higher = packs move further left/right from each other.",
-            )
-            / 100.0
-        )
-
-        hero_scale_factor = (
-            st.slider(
-                "Front pack size vs hero (%)",
-                40,
-                110,
-                int(DEFAULT_HERO_SCALE_FACTOR * 100),
-                help="100% = same height as hero, lower = smaller front pack.",
-            )
-            / 100.0
-        )
-
-    with col_o2:
-        secondary_vert_offset_ratio = (
-            st.slider(
-                "Front pack drop (%)",
-                0,
-                150,
-                int(DEFAULT_SECONDARY_VERT_OFFSET_RATIO * 100),
-                help="Higher = front pack sits lower on the canvas.",
-            )
-            / 100.0
-        )
+    overlay_drop_ratio = st.slider(
+        "Front pack drop (%)",
+        0, 120, 80,
+        help=(
+            "How far to drop the front pack down from vertical center.\n"
+            "Higher = closer to the bottom."
+        ),
+    )
+    overlay_scale_ratio = st.slider(
+        "Front pack size vs hero (%)",
+        30, 120, 60,
+        help="Relative size of front pack vs hero (100% = same visual height).",
+    )
 
 st.markdown("---")
 
 
-# ----------------- HELPERS -----------------
+# ---------- HELPERS ----------
 
-def load_image_from_file_or_url(file, url) -> Image.Image | None:
-    """Priority: file upload > URL > None. Convert to RGBA."""
+def load_image_from_file_or_url(file, url) -> Optional[Image.Image]:
+    """Priority: file upload > URL > None."""
     if file is not None:
         return Image.open(file).convert("RGBA")
 
@@ -176,6 +140,7 @@ def load_image_from_file_or_url(file, url) -> Image.Image | None:
 
 
 def maybe_remove_bg(img: Image.Image, do_remove: bool) -> Image.Image:
+    """Remove background for a single image if requested & rembg available."""
     if HAS_REMBG and do_remove:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -185,34 +150,23 @@ def maybe_remove_bg(img: Image.Image, do_remove: bool) -> Image.Image:
     return img
 
 
-def make_canvas(size: int, bg_mode: str) -> Tuple[Image.Image, str]:
-    """Create canvas and return (image, mode)."""
-    if bg_mode == "Transparent PNG":
-        return Image.new("RGBA", (size, size), (0, 0, 0, 0)), "RGBA"
-    else:
-        return Image.new("RGB", (size, size), (255, 255, 255)), "RGB"
-
-
-def paste_with_alpha(bg: Image.Image, fg: Image.Image, x: int, y: int) -> None:
-    """Paste fg onto bg using alpha channel if available."""
+def paste_with_alpha(bg: Image.Image, fg: Image.Image, x: int, y: int):
     if fg.mode == "RGBA":
         bg.paste(fg, (x, y), fg)
     else:
         bg.paste(fg, (x, y))
 
 
-def combine_side_by_side(
-    img1: Image.Image,
-    img2: Image.Image,
-    canvas_size: int,
-    gap_ratio: float,
-    padding_ratio: float,
-    bg_mode: str,
-) -> Image.Image:
-    canvas, _ = make_canvas(canvas_size, bg_mode)
+def combine_side_by_side(img1: Image.Image,
+                         img2: Image.Image,
+                         canvas_size: int,
+                         gap_ratio: float,
+                         padding_ratio: float) -> Image.Image:
+    """Side-by-side layout, centered in both directions."""
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 255))
 
-    gap_px = int(canvas_size * gap_ratio)
-    padding_px = int(canvas_size * padding_ratio)
+    gap_px = int(canvas_size * (gap_ratio / 100.0))
+    padding_px = int(canvas_size * (padding_ratio / 100.0))
 
     avail_width = canvas_size - 2 * padding_px - gap_px
     avail_height = canvas_size - 2 * padding_px
@@ -221,7 +175,9 @@ def combine_side_by_side(
     w2, h2 = img2.size
 
     scale_by_width = avail_width / float(w1 + w2)
-    scale_by_height = min(avail_height / float(h1), avail_height / float(h2))
+    scale_by_height = min(avail_height / float(h1),
+                          avail_height / float(h2))
+
     scale = min(scale_by_width, scale_by_height)
 
     new_w1, new_h1 = int(w1 * scale), int(h1 * scale)
@@ -236,7 +192,6 @@ def combine_side_by_side(
     x1 = start_x
     x2 = start_x + new_w1 + gap_px
 
-    # Vertically center both
     y1 = (canvas_size - new_h1) // 2
     y2 = (canvas_size - new_h2) // 2
 
@@ -246,65 +201,73 @@ def combine_side_by_side(
     return canvas
 
 
-def combine_overlay_hero(
-    hero_img: Image.Image,
-    front_img: Image.Image,
-    canvas_size: int,
-    padding_ratio: float,
-    overlay_offset_ratio: float,
-    secondary_vert_offset_ratio: float,
-    hero_scale_factor: float,
-    bg_mode: str,
-) -> Image.Image:
-    canvas, _ = make_canvas(canvas_size, bg_mode)
+def combine_overlay(img_hero: Image.Image,
+                    img_front: Image.Image,
+                    canvas_size: int,
+                    padding_ratio: float,
+                    distance_ratio: float,
+                    drop_ratio: float,
+                    scale_ratio: float) -> Image.Image:
+    """
+    Overlay layout:
+    - Hero pack centered and scaled to fit within padding.
+    - Front pack scaled vs hero and positioned using sliders:
+        * distance_ratio: horizontal shift from center (-100..100).
+        * drop_ratio: how far to drop from vertical center (0..120).
+    """
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 255))
 
-    padding_px = int(canvas_size * padding_ratio)
+    padding_px = int(canvas_size * (padding_ratio / 100.0))
 
-    # --- Scale hero to fit canvas with padding ---
-    h_w, h_h = hero_img.size
-    max_hero_w = canvas_size - 2 * padding_px
-    max_hero_h = canvas_size - 2 * padding_px
+    # --- Scale hero to fit nicely in padded area ---
+    avail_width = canvas_size - 2 * padding_px
+    avail_height = canvas_size - 2 * padding_px
 
-    hero_scale = min(max_hero_w / float(h_w), max_hero_h / float(h_h))
-    hero_w, hero_h = int(h_w * hero_scale), int(h_h * hero_scale)
+    hw, hh = img_hero.size
+    hero_scale = min(avail_width / float(hw), avail_height / float(hh))
 
-    hero_res = hero_img.resize((hero_w, hero_h), Image.Resampling.LANCZOS)
+    hero_w, hero_h = int(hw * hero_scale), int(hh * hero_scale)
+    hero_res = img_hero.resize((hero_w, hero_h), Image.Resampling.LANCZOS)
 
-    hero_bottom = canvas_size - padding_px
-    hero_y = hero_bottom - hero_h
     hero_x = (canvas_size - hero_w) // 2
+    hero_y = (canvas_size - hero_h) // 2
 
     paste_with_alpha(canvas, hero_res, hero_x, hero_y)
 
-    # --- Scale & position front pack ---
-    f_w, f_h = front_img.size
-    target_front_h = int(hero_h * hero_scale_factor)
-    front_scale = target_front_h / float(f_h)
-    front_w, front_h = int(f_w * front_scale), int(f_h * front_scale)
+    # --- Scale front relative to hero height ---
+    fw, fh = img_front.size
+    target_front_h = int(hero_h * (scale_ratio / 100.0))
+    front_scale = target_front_h / float(fh)
+    front_w, front_h = int(fw * front_scale), target_front_h
 
-    front_res = front_img.resize((front_w, front_h), Image.Resampling.LANCZOS)
+    front_res = img_front.resize((front_w, front_h), Image.Resampling.LANCZOS)
 
-    # Horizontal: relative to hero center
-    hero_center_x = hero_x + hero_w // 2
-    offset_px = int((hero_w / 2.0) * overlay_offset_ratio)
+    # --- Horizontal position: distance_ratio moves center left/right ---
+    center_x = canvas_size // 2
 
-    # Put front to the right of hero center by default
-    front_x = hero_center_x - front_w // 2 + offset_px
-    # Clamp inside canvas with small margin
-    front_x = max(padding_px, min(canvas_size - padding_px - front_w, front_x))
+    max_shift = (canvas_size - front_w) // 2
+    offset_px = int((distance_ratio / 100.0) * max_shift)
+    front_center_x = center_x + offset_px
 
-    # Vertical: baseline = hero_bottom, then drop further
-    baseline = hero_bottom
-    extra_down = int(padding_px * secondary_vert_offset_ratio * 2.0)
-    front_bottom = min(canvas_size - padding_px // 10, baseline + extra_down)
-    front_y = front_bottom - front_h
+    # Clamp so image stays inside canvas
+    front_center_x = max(front_w // 2, min(canvas_size - front_w // 2, front_center_x))
+    front_x = front_center_x - front_w // 2
+
+    # --- Vertical position: drop from center downwards ---
+    # Range is roughly from center to bottom padding area.
+    center_y = canvas_size // 2
+    max_drop = canvas_size - padding_px - front_h - center_y
+    max_drop = max(0, max_drop)
+    drop_px = int((drop_ratio / 100.0) * max_drop)
+
+    front_y = center_y + drop_px
 
     paste_with_alpha(canvas, front_res, front_x, front_y)
 
     return canvas
 
 
-# ----------------- MAIN ACTION -----------------
+# ---------- MAIN ACTION ----------
 
 if st.button("✨ Generate Combined Image", type="primary"):
     img1 = load_image_from_file_or_url(img_file_1, img_url_1)
@@ -318,46 +281,43 @@ if st.button("✨ Generate Combined Image", type="primary"):
             img2_proc = maybe_remove_bg(img2, remove_bg_2)
 
             if layout_mode == "Side-by-side":
-                combined = combine_side_by_side(
+                result = combine_side_by_side(
                     img1_proc,
                     img2_proc,
                     quality,
                     gap_ratio,
                     outer_padding_ratio,
-                    bg_mode,
                 )
             else:
-                # Treat Image 1 as hero (back), Image 2 as front by default
-                combined = combine_overlay_hero(
-                    hero_img=img1_proc,
-                    front_img=img2_proc,
-                    canvas_size=quality,
-                    padding_ratio=outer_padding_ratio,
-                    overlay_offset_ratio=overlay_offset_ratio,
-                    secondary_vert_offset_ratio=secondary_vert_offset_ratio,
-                    hero_scale_factor=hero_scale_factor,
-                    bg_mode=bg_mode,
+                result = combine_overlay(
+                    img1_proc,
+                    img2_proc,
+                    quality,
+                    outer_padding_ratio,
+                    overlay_distance_ratio,
+                    overlay_drop_ratio,
+                    overlay_scale_ratio,
                 )
 
         st.success("Done! Preview below 👇")
-        st.image(combined, caption="Combined Image", use_column_width=True)
+        st.image(result, caption="Combined SKU Image", use_column_width=True)
 
         buf = io.BytesIO()
-        # Always save as PNG so transparency is preserved if used
-        combined.save(buf, format="PNG")
+        # PNG + alpha, so can stay transparent when BG is removed
+        result.save(buf, format="PNG")
         buf.seek(0)
 
         st.download_button(
-            label=f"⬇️ Download PNG ({quality} × {quality})",
+            label=f"⬇️ Download PNG ({quality} x {quality})",
             data=buf,
-            file_name=f"combined_image_{quality}px.png",
+            file_name=f"combined_sku_{quality}px.png",
             mime="image/png",
         )
 
-# ----------------- FOOTER -----------------
-
+st.markdown("---")
 st.markdown(
-    "<div style='margin-top:3rem; text-align:center; font-size:0.8rem; "
-    "opacity:0.6;'>Vibe-coded by @frnkygabriel</div>",
+    "<p style='text-align:center; font-size: 12px; opacity: 0.7;'>"
+    "Vibe-coded by @frnkygabriel"
+    "</p>",
     unsafe_allow_html=True,
 )
