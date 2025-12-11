@@ -99,4 +99,121 @@ def load_image_from_file_or_url(file, url):
 
 def maybe_remove_bg(img: Image.Image) -> Image.Image:
     """Run rembg background removal if available and enabled."""
-    if HAS_REMBG and remo_
+    if HAS_REMBG and remove_bg:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data = buf.getvalue()          # bytes
+        out = remove(data)             # bytes with alpha
+        return Image.open(io.BytesIO(out)).convert("RGBA")
+    return img
+
+
+def combine_images_smart(
+    img1: Image.Image,
+    img2: Image.Image,
+    canvas_size: int,
+    gap_ratio: int,
+    outer_padding_ratio: int,
+) -> Image.Image:
+    """
+    Place two images side-by-side on a transparent square canvas:
+    - Both images share the same final height (balanced look)
+    - Bottom-aligned like sitting on a shelf
+    - Respect gap & outer padding settings
+    """
+    # Transparent canvas (RGBA)
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 0))
+
+    gap_px = int(canvas_size * (gap_ratio / 100.0))
+    padding_px = int(canvas_size * (outer_padding_ratio / 100.0))
+
+    # Available width & height inside padding
+    avail_width = canvas_size - 2 * padding_px - gap_px
+    avail_height = canvas_size - 2 * padding_px
+
+    # Original sizes
+    w1, h1 = img1.size
+    w2, h2 = img2.size
+
+    # First, give both the same target height
+    target_height = avail_height
+    scale1 = target_height / float(h1)
+    scale2 = target_height / float(h2)
+
+    w1_t = w1 * scale1
+    w2_t = w2 * scale2
+
+    total_width_t = w1_t + gap_px + w2_t
+
+    # If widths overflow, scale everything down proportionally
+    if total_width_t > avail_width:
+        width_scale = avail_width / float(total_width_t)
+    else:
+        width_scale = 1.0
+
+    final_h = int(target_height * width_scale)
+    final_w1 = int(w1 * scale1 * width_scale)
+    final_w2 = int(w2 * scale2 * width_scale)
+
+    img1_res = img1.resize((final_w1, final_h), Image.Resampling.LANCZOS)
+    img2_res = img2.resize((final_w2, final_h), Image.Resampling.LANCZOS)
+
+    # Horizontal positions: center the pair
+    total_width_final = final_w1 + gap_px + final_w2
+    start_x = (canvas_size - total_width_final) // 2
+    x1 = start_x
+    x2 = start_x + final_w1 + gap_px
+
+    # Vertical positions: bottom-align within the padding box
+    bottom_y = canvas_size - padding_px
+    y1 = bottom_y - final_h
+    y2 = bottom_y - final_h
+
+    def paste_with_alpha(bg, fg, x, y):
+        if fg.mode == "RGBA":
+            bg.paste(fg, (x, y), fg)  # preserve transparency
+        else:
+            bg.paste(fg, (x, y))
+
+    paste_with_alpha(canvas, img1_res, x1, y1)
+    paste_with_alpha(canvas, img2_res, x2, y2)
+
+    return canvas
+
+
+# ---------- MAIN ACTION ----------
+
+st.markdown("---")
+
+if st.button("✨ Generate Combined Image", type="primary"):
+    img1 = load_image_from_file_or_url(img_file_1, img_url_1)
+    img2 = load_image_from_file_or_url(img_file_2, img_url_2)
+
+    if img1 is None or img2 is None:
+        st.error("Please provide both images (via upload or URL).")
+    else:
+        with st.spinner("Processing images..."):
+            img1_proc = maybe_remove_bg(img1)
+            img2_proc = maybe_remove_bg(img2)
+
+            result = combine_images_smart(
+                img1_proc,
+                img2_proc,
+                quality,
+                gap_ratio,
+                outer_padding_ratio,
+            )
+
+        st.success("Done! Preview below 👇")
+        st.image(result, caption="Combined SKU Image", use_column_width=True)
+
+        buf = io.BytesIO()
+        result.save(buf, format="PNG")
+        buf.seek(0)
+
+        st.download_button(
+            label=f"⬇️ Download PNG ({quality} x {quality})",
+            data=buf,
+            file_name=f"combined_sku_{quality}px.png",
+            mime="image/png",
+        )
