@@ -1,0 +1,5 @@
+streamlit
+pillow
+requests
+rembg[cpu]
+onnxruntime-silicon
