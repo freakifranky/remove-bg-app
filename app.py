@@ -1,6 +1,6 @@
 import io
 import requests
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
 # ---------- REMBG IMPORT (OPTIONAL) ----------
@@ -12,6 +12,16 @@ try:
 except Exception as e:
     HAS_REMBG = False
     REMBG_ERROR = repr(e)
+
+# ---------- CONSTANTS ----------
+
+FOOTER_TEXT = "Vibe-coded by @frnkygabriel"
+
+# Overlay tuning
+OVERLAY_OFFSET_RATIO = 0.16          # horizontal separation between hero & secondary
+HERO_SCALE_FACTOR = 0.65             # secondary size ≈ hero_size * 0.65
+SECONDARY_VERT_OFFSET_RATIO = 0.4    # how much lower secondary sits vs hero (fraction of padding)
+
 
 # ---------- PAGE CONFIG ----------
 
@@ -71,7 +81,7 @@ bg_mode = st.radio(
 layout_mode = st.radio(
     "Layout",
     ["Side by side", "Overlay (equal)", "Overlay (hero + secondary)"],
-    index=0,
+    index=2,   # default to hero layout since it's your main use
 )
 
 hero_choice = "Image 1"
@@ -105,11 +115,10 @@ outer_padding_ratio = st.slider(
     help="Controls margin around the products",
 )
 
-# ---- Overlay behaviour constants ----
-OVERLAY_OFFSET_RATIO = 0.16          # horizontal separation between hero & secondary
-HERO_SCALE_FACTOR = 0.65             # secondary size ≈ hero_size * 0.65
-SECONDARY_VERT_OFFSET_RATIO = 0.4    # how much lower secondary sits vs hero (fraction of padding)
-
+add_footer = st.checkbox(
+    "Add tiny footer: 'Vibe-coded by @frnkygabriel'",
+    value=True,
+)
 
 # ---------- HELPERS ----------
 
@@ -270,7 +279,7 @@ def combine_overlay_hero(
     hero_is_first: bool,
 ) -> Image.Image:
     """
-    Overlay layout like KIT + BayFresh, Cheetos + Saltcheese etc:
+    Overlay layout like the examples:
     - One hero pack larger & behind
     - Secondary pack smaller, in front, slightly lower
     """
@@ -293,9 +302,7 @@ def combine_overlay_hero(
     k = HERO_SCALE_FACTOR  # secondary ~= k * hero
 
     # Constraints so both fit in inner box even after overlap:
-    # 1) height
     height_constraint = inner_height / float(max(h_h, k * h_s))
-    # 2) width (hero + secondary, with some overlap/offset)
     width_constraint = (2 * inner_width - 2 * offset_px) / float(w_h + k * w_s)
 
     s_hero = min(height_constraint, width_constraint)
@@ -355,6 +362,41 @@ def combine_images(
         )
 
 
+def add_footer_watermark(img: Image.Image, text: str, bg_mode: str) -> Image.Image:
+    """Add a tiny bottom-centered footer like 'Vibe-coded by @frnkygabriel'."""
+    draw = ImageDraw.Draw(img)
+    w, h = img.size
+
+    # font size relative to image size
+    font_size = max(12, w // 40)
+    try:
+        # If the environment has a TTF, you can point to it here
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except Exception:
+        font = ImageFont.load_default()
+
+    text_w, text_h = draw.textsize(text, font=font)
+    margin = max(8, h // 80)
+
+    x = (w - text_w) // 2
+    y = h - text_h - margin
+
+    # Choose text color: on white / transparent use dark, on black use white
+    if bg_mode == "Black":
+        text_color = (255, 255, 255)
+        outline_color = (0, 0, 0)
+    else:
+        text_color = (0, 0, 0)
+        outline_color = (255, 255, 255)
+
+    # Draw slight outline for readability
+    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+    draw.text((x, y), text, font=font, fill=text_color)
+
+    return img
+
+
 # ---------- MAIN ACTION ----------
 
 st.markdown("---")
@@ -381,10 +423,14 @@ if st.button("✨ Generate Combined Image", type="primary"):
                 hero_choice,
             )
 
+            if add_footer:
+                result = add_footer_watermark(result, FOOTER_TEXT, bg_mode)
+
         st.success("Done! Preview below 👇")
         st.image(result, caption="Combined SKU Image", use_column_width=True)
 
         buf = io.BytesIO()
+        # Always output PNG so you keep transparency if selected
         result.save(buf, format="PNG")
         buf.seek(0)
 
