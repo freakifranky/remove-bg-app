@@ -107,20 +107,22 @@ outer_padding_ratio = st.slider(
 if layout_mode == "Overlay (hero + front)":
     st.markdown("### Overlay fine-tuning")
     overlay_distance_ratio = st.slider(
-        "Distance between packs (%)",
-        -300, 300, 40,   # <-- wider range
-        help=(
-            "Horizontal position of the **front** pack relative to center.\n"
-            "0 = centered; positive = move right; negative = move left."
-        ),
-    )
-    overlay_drop_ratio = st.slider(
-        "Front pack drop (%)",
-        0, 300, 80,      # <-- wider range
-        help=(
-            "How far to drop the front pack down from vertical center.\n"
-            "Higher = closer to the bottom of the canvas."
-        ),
+    "Distance between packs (%)",
+    -500, 500, 40,   # <-- updated range
+    help=(
+        "Horizontal position of the **front** pack relative to center.\n"
+        "-500 = far left, +500 = far right."
+    ),
+)
+
+overlay_drop_ratio = st.slider(
+    "Front pack drop (%)",
+    0, 500, 80,      # <-- updated range
+    help=(
+        "How far to drop the front pack downward from center.\n"
+        "Higher = pushed further down (towards the bottom)."
+    ),
+)
     )
     overlay_scale_ratio = st.slider(
         "Front pack size vs hero (%)",
