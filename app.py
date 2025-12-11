@@ -20,7 +20,7 @@ st.title("SKU Image Combiner – Quickcommerce Ready")
 
 st.markdown(
     "Upload **two SKU images** (file or URL), optionally remove background, "
-    "and download a combined 1:1 image (PNG with transparency)."
+    "and download a combined 1:1 image (PNG, white or transparent background)."
 )
 
 # ---------- INPUTS ----------
@@ -43,7 +43,7 @@ st.markdown("---")
 
 if HAS_REMBG:
     remove_bg = st.checkbox(
-        "Remove background (works even if background is white)",
+        "Remove background using AI (can be imperfect on noisy images)",
         value=False,
     )
 else:
@@ -53,6 +53,12 @@ else:
         f"Import error: {REMBG_ERROR}\n"
         "On your own machine, install with: `python3 -m pip install \"rembg[cpu]\"`."
     )
+
+bg_mode = st.radio(
+    "Background",
+    ["White (recommended for category tiles)", "Transparent PNG"],
+    index=0,
+)
 
 quality = st.selectbox(
     "Output size (square, px)",
@@ -75,6 +81,14 @@ outer_padding_ratio = st.slider(
     10,
     4,
     help="Controls margin around the products",
+)
+
+product_height_ratio = st.slider(
+    "Product height (% of inner area)",
+    40,
+    90,
+    65,
+    help="How tall the products appear relative to the tile. Try ~60–70% for category tiles.",
 )
 
 # ---------- HELPERS ----------
@@ -114,15 +128,21 @@ def combine_images_smart(
     canvas_size: int,
     gap_ratio: int,
     outer_padding_ratio: int,
+    product_height_ratio: int,
+    bg_mode: str,
 ) -> Image.Image:
     """
-    Place two images side-by-side on a transparent square canvas:
+    Place two images side-by-side on a square canvas:
     - Both images share the same final height (balanced look)
-    - Bottom-aligned like sitting on a shelf
-    - Respect gap & outer padding settings
+    - Positioned similarly to category pair tiles
+    - Background can be white or transparent
     """
-    # Transparent canvas (RGBA)
-    canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 0))
+    if bg_mode.startswith("White"):
+        # White background (RGB)
+        canvas = Image.new("RGB", (canvas_size, canvas_size), (255, 255, 255))
+    else:
+        # Transparent background (RGBA)
+        canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 0))
 
     gap_px = int(canvas_size * (gap_ratio / 100.0))
     padding_px = int(canvas_size * (outer_padding_ratio / 100.0))
@@ -131,12 +151,14 @@ def combine_images_smart(
     avail_width = canvas_size - 2 * padding_px - gap_px
     avail_height = canvas_size - 2 * padding_px
 
+    # Target product height as a fraction of available height
+    target_height = int(avail_height * (product_height_ratio / 100.0))
+
     # Original sizes
     w1, h1 = img1.size
     w2, h2 = img2.size
 
-    # First, give both the same target height
-    target_height = avail_height
+    # First, scale each image to the same target height
     scale1 = target_height / float(h1)
     scale2 = target_height / float(h2)
 
@@ -164,14 +186,20 @@ def combine_images_smart(
     x1 = start_x
     x2 = start_x + final_w1 + gap_px
 
-    # Vertical positions: bottom-align within the padding box
+    # Vertical positions: align around lower-middle band
+    # We don't fully bottom-stick them; we keep them slightly above bottom padding
     bottom_y = canvas_size - padding_px
     y1 = bottom_y - final_h
     y2 = bottom_y - final_h
 
     def paste_with_alpha(bg, fg, x, y):
-        if fg.mode == "RGBA":
+        if fg.mode == "RGBA" and bg.mode == "RGBA":
             bg.paste(fg, (x, y), fg)  # preserve transparency
+        elif fg.mode == "RGBA" and bg.mode == "RGB":
+            # composite over white for RGB canvas
+            tmp = Image.new("RGB", fg.size, (255, 255, 255))
+            tmp.paste(fg, mask=fg.split()[-1])
+            bg.paste(tmp, (x, y))
         else:
             bg.paste(fg, (x, y))
 
@@ -202,12 +230,15 @@ if st.button("✨ Generate Combined Image", type="primary"):
                 quality,
                 gap_ratio,
                 outer_padding_ratio,
+                product_height_ratio,
+                bg_mode,
             )
 
         st.success("Done! Preview below 👇")
         st.image(result, caption="Combined SKU Image", use_column_width=True)
 
         buf = io.BytesIO()
+        # Always PNG (supports transparency if used)
         result.save(buf, format="PNG")
         buf.seek(0)
 
