@@ -2,7 +2,7 @@ import io
 import requests
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 import streamlit as st
 
 # ---------- Optional background remover ----------
@@ -64,6 +64,17 @@ layout_mode = st.radio(
     horizontal=True,
 )
 
+# Background mode
+bg_mode = st.radio(
+    "Background",
+    ["White", "Transparent PNG"],
+    horizontal=True,
+)
+if bg_mode == "White":
+    bg_rgba = (255, 255, 255, 255)
+else:
+    bg_rgba = (0, 0, 0, 0)  # fully transparent
+
 # Common controls
 quality = st.selectbox(
     "Output size (square, px)",
@@ -89,7 +100,7 @@ if layout_mode == "Side-by-side":
 outer_padding_ratio = st.slider(
     "Outer padding (left & right, and top & bottom) (% of canvas size)",
     0, 15, 5,
-    help="Controls the white margin around the packs. 0 = almost full-bleed."
+    help="Controls the margin around the packs. 0 = almost full-bleed."
 )
 
 # Overlay fine-tuning
@@ -97,7 +108,7 @@ if layout_mode == "Overlay (hero + front)":
     st.markdown("### Overlay fine-tuning")
     overlay_distance_ratio = st.slider(
         "Distance between packs (%)",
-        -100, 100, 40,
+        -200, 200, 40,
         help=(
             "Horizontal position of the **front** pack relative to center.\n"
             "0 = centered; positive = move right; negative = move left."
@@ -105,10 +116,10 @@ if layout_mode == "Overlay (hero + front)":
     )
     overlay_drop_ratio = st.slider(
         "Front pack drop (%)",
-        0, 120, 80,
+        0, 200, 80,
         help=(
             "How far to drop the front pack down from vertical center.\n"
-            "Higher = closer to the bottom."
+            "Higher = closer to the bottom of the canvas."
         ),
     )
     overlay_scale_ratio = st.slider(
@@ -157,13 +168,16 @@ def paste_with_alpha(bg: Image.Image, fg: Image.Image, x: int, y: int):
         bg.paste(fg, (x, y))
 
 
-def combine_side_by_side(img1: Image.Image,
-                         img2: Image.Image,
-                         canvas_size: int,
-                         gap_ratio: float,
-                         padding_ratio: float) -> Image.Image:
+def combine_side_by_side(
+    img1: Image.Image,
+    img2: Image.Image,
+    canvas_size: int,
+    gap_ratio: float,
+    padding_ratio: float,
+    bg_color: tuple,
+) -> Image.Image:
     """Side-by-side layout, centered in both directions."""
-    canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 255))
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), bg_color)
 
     gap_px = int(canvas_size * (gap_ratio / 100.0))
     padding_px = int(canvas_size * (padding_ratio / 100.0))
@@ -201,21 +215,24 @@ def combine_side_by_side(img1: Image.Image,
     return canvas
 
 
-def combine_overlay(img_hero: Image.Image,
-                    img_front: Image.Image,
-                    canvas_size: int,
-                    padding_ratio: float,
-                    distance_ratio: float,
-                    drop_ratio: float,
-                    scale_ratio: float) -> Image.Image:
+def combine_overlay(
+    img_hero: Image.Image,
+    img_front: Image.Image,
+    canvas_size: int,
+    padding_ratio: float,
+    distance_ratio: float,
+    drop_ratio: float,
+    scale_ratio: float,
+    bg_color: tuple,
+) -> Image.Image:
     """
     Overlay layout:
     - Hero pack centered and scaled to fit within padding.
-    - Front pack scaled vs hero and positioned using sliders:
-        * distance_ratio: horizontal shift from center (-100..100).
-        * drop_ratio: how far to drop from vertical center (0..120).
+    - Front pack scaled vs hero height and positioned using sliders:
+        * distance_ratio: horizontal shift from center (-200..200).
+        * drop_ratio: how far to drop from vertical center (0..200).
     """
-    canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 255))
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), bg_color)
 
     padding_px = int(canvas_size * (padding_ratio / 100.0))
 
@@ -246,21 +263,21 @@ def combine_overlay(img_hero: Image.Image,
     center_x = canvas_size // 2
 
     max_shift = (canvas_size - front_w) // 2
-    offset_px = int((distance_ratio / 100.0) * max_shift)
+    offset_px = int((distance_ratio / 100.0) * max_shift * 2)  # extra reach
     front_center_x = center_x + offset_px
 
-    # Clamp so image stays inside canvas
+    # Clamp so it never gets cropped
     front_center_x = max(front_w // 2, min(canvas_size - front_w // 2, front_center_x))
     front_x = front_center_x - front_w // 2
 
     # --- Vertical position: drop from center downwards ---
-    # Range is roughly from center to bottom padding area.
     center_y = canvas_size // 2
     max_drop = canvas_size - padding_px - front_h - center_y
     max_drop = max(0, max_drop)
-    drop_px = int((drop_ratio / 100.0) * max_drop)
+    drop_px = int((drop_ratio / 100.0) * max_drop * 2)  # extra reach
 
     front_y = center_y + drop_px
+    front_y = min(canvas_size - padding_px - front_h, front_y)
 
     paste_with_alpha(canvas, front_res, front_x, front_y)
 
@@ -287,6 +304,7 @@ if st.button("✨ Generate Combined Image", type="primary"):
                     quality,
                     gap_ratio,
                     outer_padding_ratio,
+                    bg_rgba,
                 )
             else:
                 result = combine_overlay(
@@ -297,14 +315,23 @@ if st.button("✨ Generate Combined Image", type="primary"):
                     overlay_distance_ratio,
                     overlay_drop_ratio,
                     overlay_scale_ratio,
+                    bg_rgba,
                 )
 
         st.success("Done! Preview below 👇")
         st.image(result, caption="Combined SKU Image", use_column_width=True)
 
+        # ---------- Prepare for download ----------
+        if bg_mode == "White":
+            # Flatten RGBA onto white for clean white background
+            out_img = Image.new("RGB", result.size, (255, 255, 255))
+            out_img.paste(result, mask=result.split()[-1])  # use alpha channel
+        else:
+            # Keep transparency
+            out_img = result
+
         buf = io.BytesIO()
-        # PNG + alpha, so can stay transparent when BG is removed
-        result.save(buf, format="PNG")
+        out_img.save(buf, format="PNG")
         buf.seek(0)
 
         st.download_button(
