@@ -1,6 +1,6 @@
 import io
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 import streamlit as st
 
 # ---------- REMBG IMPORT (OPTIONAL) ----------
@@ -15,13 +15,10 @@ except Exception as e:
 
 # ---------- CONSTANTS ----------
 
-FOOTER_TEXT = "Vibe-coded by @frnkygabriel"
-
-# Overlay tuning
 OVERLAY_OFFSET_RATIO = 0.16          # horizontal separation between hero & secondary
 HERO_SCALE_FACTOR = 0.65             # secondary size ≈ hero_size * 0.65
-SECONDARY_VERT_OFFSET_RATIO = 0.4    # how much lower secondary sits vs hero (fraction of padding)
-
+SECONDARY_VERT_OFFSET_RATIO = 0.4    # how much lower secondary sits vs hero
+FOOTER_TEXT = "Vibe-coded by @frnkygabriel"
 
 # ---------- PAGE CONFIG ----------
 
@@ -35,7 +32,6 @@ st.markdown(
 
 # ---------- INPUTS ----------
 
-# defaults so they're always defined
 remove_bg_1 = False
 remove_bg_2 = False
 
@@ -81,7 +77,7 @@ bg_mode = st.radio(
 layout_mode = st.radio(
     "Layout",
     ["Side by side", "Overlay (equal)", "Overlay (hero + secondary)"],
-    index=2,   # default to hero layout since it's your main use
+    index=2,
 )
 
 hero_choice = "Image 1"
@@ -113,11 +109,6 @@ outer_padding_ratio = st.slider(
     12,
     5,
     help="Controls margin around the products",
-)
-
-add_footer = st.checkbox(
-    "Add tiny footer: 'Vibe-coded by @frnkygabriel'",
-    value=True,
 )
 
 # ---------- HELPERS ----------
@@ -193,7 +184,6 @@ def combine_side_by_side(
     w1, h1 = img1.size
     w2, h2 = img2.size
 
-    # Max uniform scale that fits both heights and combined width
     s_height = min(avail_height / float(h1), avail_height / float(h2))
     s_width = (avail_width) / float(w1 + w2) if (w1 + w2) > 0 else s_height
     s = min(s_height, s_width)
@@ -208,7 +198,6 @@ def combine_side_by_side(
     x1 = (canvas_size - total_width) // 2
     x2 = x1 + new_w1 + gap_px
 
-    # Center the whole pair vertically
     final_h = max(new_h1, new_h2)
     top_y = (canvas_size - final_h) // 2
     bottom_y = top_y + final_h
@@ -263,7 +252,6 @@ def combine_overlay_equal(
     y1 = cy - new_h1 // 2
     y2 = cy - new_h2 // 2
 
-    # img1 back, img2 front
     paste_with_alpha(canvas, img1_res, x1, y1)
     paste_with_alpha(canvas, img2_res, x2, y2)
 
@@ -278,18 +266,13 @@ def combine_overlay_hero(
     bg_mode: str,
     hero_is_first: bool,
 ) -> Image.Image:
-    """
-    Overlay layout like the examples:
-    - One hero pack larger & behind
-    - Secondary pack smaller, in front, slightly lower
-    """
+    """Overlay layout: hero pack larger & behind, secondary smaller & in front."""
     canvas = make_canvas(bg_mode, canvas_size)
 
     padding_px = int(canvas_size * (outer_padding_ratio / 100.0))
     inner_width = canvas_size - 2 * padding_px
     inner_height = canvas_size - 2 * padding_px
 
-    # Decide which is hero
     if hero_is_first:
         hero, secondary = img1, img2
     else:
@@ -299,9 +282,8 @@ def combine_overlay_hero(
     w_s, h_s = secondary.size
 
     offset_px = int(inner_width * OVERLAY_OFFSET_RATIO)
-    k = HERO_SCALE_FACTOR  # secondary ~= k * hero
+    k = HERO_SCALE_FACTOR
 
-    # Constraints so both fit in inner box even after overlap:
     height_constraint = inner_height / float(max(h_h, k * h_s))
     width_constraint = (2 * inner_width - 2 * offset_px) / float(w_h + k * w_s)
 
@@ -314,22 +296,17 @@ def combine_overlay_hero(
     hero_res = hero.resize((new_w_h, new_h_h), Image.Resampling.LANCZOS)
     sec_res = secondary.resize((new_w_s, new_h_s), Image.Resampling.LANCZOS)
 
-    # Horizontal positions: hero slightly left/back, secondary right/front
     cx = canvas_size // 2
-    baseline = canvas_size - padding_px  # hero bottom baseline
+    baseline = canvas_size - padding_px
 
     x_h = cx - new_w_h // 2 - offset_px // 2
     x_s = cx - new_w_s // 2 + offset_px // 2
 
-    # Hero anchored to baseline
     y_h = baseline - new_h_h
-
-    # Secondary bottom a bit LOWER than hero bottom (more “in front” feel)
     extra_down = int(padding_px * SECONDARY_VERT_OFFSET_RATIO)
     sec_bottom = min(canvas_size - padding_px // 4, baseline + extra_down)
     y_s = sec_bottom - new_h_s
 
-    # Draw hero first, then secondary on top
     paste_with_alpha(canvas, hero_res, x_h, y_h)
     paste_with_alpha(canvas, sec_res, x_s, y_s)
 
@@ -361,42 +338,6 @@ def combine_images(
             img1, img2, canvas_size, outer_padding_ratio, bg_mode, hero_is_first
         )
 
-
-def add_footer_watermark(img: Image.Image, text: str, bg_mode: str) -> Image.Image:
-    """Add a tiny bottom-centered footer like 'Vibe-coded by @frnkygabriel'."""
-    draw = ImageDraw.Draw(img)
-    w, h = img.size
-
-    # font size relative to image size
-    font_size = max(12, w // 40)
-    try:
-        # If the environment has a TTF, you can point to it here
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except Exception:
-        font = ImageFont.load_default()
-
-    text_w, text_h = draw.textsize(text, font=font)
-    margin = max(8, h // 80)
-
-    x = (w - text_w) // 2
-    y = h - text_h - margin
-
-    # Choose text color: on white / transparent use dark, on black use white
-    if bg_mode == "Black":
-        text_color = (255, 255, 255)
-        outline_color = (0, 0, 0)
-    else:
-        text_color = (0, 0, 0)
-        outline_color = (255, 255, 255)
-
-    # Draw slight outline for readability
-    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-        draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
-    draw.text((x, y), text, font=font, fill=text_color)
-
-    return img
-
-
 # ---------- MAIN ACTION ----------
 
 st.markdown("---")
@@ -423,15 +364,11 @@ if st.button("✨ Generate Combined Image", type="primary"):
                 hero_choice,
             )
 
-            if add_footer:
-                result = add_footer_watermark(result, FOOTER_TEXT, bg_mode)
-
         st.success("Done! Preview below 👇")
         st.image(result, caption="Combined SKU Image", use_column_width=True)
 
         buf = io.BytesIO()
-        # Always output PNG so you keep transparency if selected
-        result.save(buf, format="PNG")
+        result.save(buf, format="PNG")  # keep transparency if chosen
         buf.seek(0)
 
         st.download_button(
@@ -440,3 +377,12 @@ if st.button("✨ Generate Combined Image", type="primary"):
             file_name=f"combined_sku_{quality}px.png",
             mime="image/png",
         )
+
+# ---------- UI FOOTER ----------
+
+st.markdown(
+    f"<div style='text-align:center; margin-top:2rem; font-size:0.8rem; opacity:0.7;'>"
+    f"{FOOTER_TEXT}"
+    f"</div>",
+    unsafe_allow_html=True,
+)
