@@ -105,9 +105,10 @@ outer_padding_ratio = st.slider(
     help="Controls margin around the products",
 )
 
-# Overlay parameters
-OVERLAY_OFFSET_RATIO = 0.16   # distance between centers as % of inner width
-HERO_SCALE_FACTOR = 0.75      # secondary ~= hero * HERO_SCALE_FACTOR (hero layout)
+# ---- Overlay behaviour constants ----
+OVERLAY_OFFSET_RATIO = 0.16          # horizontal separation between hero & secondary
+HERO_SCALE_FACTOR = 0.65             # secondary size ≈ hero_size * 0.65
+SECONDARY_VERT_OFFSET_RATIO = 0.4    # how much lower secondary sits vs hero (fraction of padding)
 
 
 # ---------- HELPERS ----------
@@ -155,10 +156,8 @@ def paste_with_alpha(bg: Image.Image, fg: Image.Image, x: int, y: int):
     if fg.mode == "RGBA" and bg.mode == "RGBA":
         bg.paste(fg, (x, y), fg)
     elif fg.mode == "RGBA" and bg.mode == "RGB":
-        tmp = Image.new("RGB", fg.size, (255, 255, 255 if bg.getpixel((0, 0)) != (0, 0, 0) else 0))
-        # Above: cheap check to decide white/black fill is not perfect, but fine.
-        # Simpler & safer:
-        tmp = Image.new("RGB", fg.size, bg.getpixel((0, 0)))
+        bg_color = bg.getpixel((0, 0))
+        tmp = Image.new("RGB", fg.size, bg_color)
         tmp.paste(fg, mask=fg.split()[-1])
         bg.paste(tmp, (x, y))
     else:
@@ -271,9 +270,9 @@ def combine_overlay_hero(
     hero_is_first: bool,
 ) -> Image.Image:
     """
-    Overlay layout like your KIT + BayFresh example:
-    - One hero pack larger, behind
-    - Secondary pack smaller, in front and to the side
+    Overlay layout like KIT + BayFresh, Cheetos + Saltcheese etc:
+    - One hero pack larger & behind
+    - Secondary pack smaller, in front, slightly lower
     """
     canvas = make_canvas(bg_mode, canvas_size)
 
@@ -291,14 +290,12 @@ def combine_overlay_hero(
     w_s, h_s = secondary.size
 
     offset_px = int(inner_width * OVERLAY_OFFSET_RATIO)
+    k = HERO_SCALE_FACTOR  # secondary ~= k * hero
 
-    # secondary scale = HERO_SCALE_FACTOR * hero_scale
-    k = HERO_SCALE_FACTOR
-
-    # Constraints:
-    # 1) height: max(h_hero, k*h_sec) * hero_scale <= inner_height
-    # 2) width: offset + (w_hero + k*w_sec)/2 * hero_scale <= inner_width
+    # Constraints so both fit in inner box even after overlap:
+    # 1) height
     height_constraint = inner_height / float(max(h_h, k * h_s))
+    # 2) width (hero + secondary, with some overlap/offset)
     width_constraint = (2 * inner_width - 2 * offset_px) / float(w_h + k * w_s)
 
     s_hero = min(height_constraint, width_constraint)
@@ -310,21 +307,25 @@ def combine_overlay_hero(
     hero_res = hero.resize((new_w_h, new_h_h), Image.Resampling.LANCZOS)
     sec_res = secondary.resize((new_w_s, new_h_s), Image.Resampling.LANCZOS)
 
+    # Horizontal positions: hero slightly left/back, secondary right/front
     cx = canvas_size // 2
-    cy = canvas_size // 2
+    baseline = canvas_size - padding_px  # hero bottom baseline
 
-    # Hero slightly left/back, secondary right/front (like your example)
     x_h = cx - new_w_h // 2 - offset_px // 2
     x_s = cx - new_w_s // 2 + offset_px // 2
 
-    y_h = cy - new_h_h // 2
-    y_s = cy - new_h_s // 2
+    # Hero anchored to baseline
+    y_h = baseline - new_h_h
+
+    # Secondary bottom a bit LOWER than hero bottom (more “in front” feel)
+    extra_down = int(padding_px * SECONDARY_VERT_OFFSET_RATIO)
+    sec_bottom = min(canvas_size - padding_px // 4, baseline + extra_down)
+    y_s = sec_bottom - new_h_s
 
     # Draw hero first, then secondary on top
     paste_with_alpha(canvas, hero_res, x_h, y_h)
     paste_with_alpha(canvas, sec_res, x_s, y_s)
 
-    # If hero was second originally, we need to return in correct order
     return canvas
 
 
