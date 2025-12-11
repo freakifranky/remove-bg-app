@@ -123,7 +123,6 @@ overlay_drop_ratio = st.slider(
         "Higher = pushed further down (towards the bottom)."
     ),
 )
-    )
     overlay_scale_ratio = st.slider(
         "Front pack size vs hero (%)",
         30, 120, 60,
