@@ -134,7 +134,7 @@ def combine_images_smart(
     """
     Place two images side-by-side on a square canvas:
     - Both images share the same final height (balanced look)
-    - Positioned similarly to category pair tiles
+    - Centered horizontally & vertically inside the padded area
     - Background can be white or transparent
     """
     if bg_mode.startswith("White"):
@@ -186,11 +186,14 @@ def combine_images_smart(
     x1 = start_x
     x2 = start_x + final_w1 + gap_px
 
-    # Vertical positions: align around lower-middle band
-    # We don't fully bottom-stick them; we keep them slightly above bottom padding
-    bottom_y = canvas_size - padding_px
-    y1 = bottom_y - final_h
-    y2 = bottom_y - final_h
+    # Vertical positions: center within the inner padded area
+    inner_top = padding_px
+    inner_bottom = canvas_size - padding_px
+    inner_height = inner_bottom - inner_top
+
+    y_center = inner_top + (inner_height - final_h) // 2
+    y1 = y_center
+    y2 = y_center
 
     def paste_with_alpha(bg, fg, x, y):
         if fg.mode == "RGBA" and bg.mode == "RGBA":
