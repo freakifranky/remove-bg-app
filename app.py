@@ -91,4 +91,37 @@ def maybe_remove_bg(img: Image.Image) -> Image.Image:
         return Image.open(io.BytesIO(out)).convert("RGBA")
     return img
 
-# ... (keep your combine_images_smart + main action exactly as you wrote)
+# ---------- MAIN ACTION ----------
+st.markdown("---")
+
+if st.button("✨ Generate Combined Image", type="primary"):
+    img1 = load_image_from_file_or_url(img_file_1, img_url_1)
+    img2 = load_image_from_file_or_url(img_file_2, img_url_2)
+
+    if img1 is None or img2 is None:
+        st.error("Please provide both images (via upload or URL).")
+    else:
+        with st.spinner("Processing images..."):
+            img1_proc = maybe_remove_bg(img1)
+            img2_proc = maybe_remove_bg(img2)
+
+            result = combine_images_smart(
+                img1_proc, img2_proc,
+                quality,
+                gap_ratio,
+                outer_padding_ratio
+            )
+
+        st.success("Done! Preview below 👇")
+        st.image(result, caption="Combined SKU Image", use_column_width=True)
+
+        buf = io.BytesIO()
+        result.save(buf, format="PNG")
+        buf.seek(0)
+
+        st.download_button(
+            label=f"⬇️ Download PNG ({quality} x {quality})",
+            data=buf,
+            file_name=f"combined_sku_{quality}px.png",
+            mime="image/png",
+        )
