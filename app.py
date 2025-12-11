@@ -19,11 +19,15 @@ st.set_page_config(page_title="SKU Image Combiner", layout="centered")
 st.title("SKU Image Combiner – Quickcommerce Ready")
 
 st.markdown(
-    "Upload **two SKU images** (file or URL), optionally remove background, "
-    "and download a combined 1:1 image (PNG, white or transparent background)."
+    "Upload **two SKU images** (file or URL), optionally remove background per image, "
+    "and download a combined 1:1 image (PNG) with multiple layout options."
 )
 
 # ---------- INPUTS ----------
+
+# defaults so they're always defined
+remove_bg_1 = False
+remove_bg_2 = False
 
 col1, col2 = st.columns(2)
 
@@ -33,21 +37,25 @@ with col1:
     )
     img_url_1 = st.text_input("Or paste Image 1 URL")
 
+    if HAS_REMBG:
+        remove_bg_1 = st.checkbox(
+            "Remove background for Image 1", value=False
+        )
+
 with col2:
     img_file_2 = st.file_uploader(
         "Upload Image 2", type=["png", "jpg", "jpeg"], key="img2"
     )
     img_url_2 = st.text_input("Or paste Image 2 URL")
 
+    if HAS_REMBG:
+        remove_bg_2 = st.checkbox(
+            "Remove background for Image 2", value=False
+        )
+
 st.markdown("---")
 
-if HAS_REMBG:
-    remove_bg = st.checkbox(
-        "Remove background using AI (can be imperfect on noisy images)",
-        value=False,
-    )
-else:
-    remove_bg = False
+if not HAS_REMBG:
     st.info(
         "Background removal disabled (rembg not available).\n"
         f"Import error: {REMBG_ERROR}\n"
@@ -56,15 +64,23 @@ else:
 
 bg_mode = st.radio(
     "Background",
-    ["White (recommended for category tiles)", "Transparent PNG"],
+    ["White", "Black", "Transparent PNG"],
     index=0,
 )
 
 layout_mode = st.radio(
     "Layout",
-    ["Side by side", "Overlay (stacked)"],
+    ["Side by side", "Overlay (equal)", "Overlay (hero + secondary)"],
     index=0,
 )
+
+hero_choice = "Image 1"
+if layout_mode == "Overlay (hero + secondary)":
+    hero_choice = st.radio(
+        "Hero image (bigger, at the back)",
+        ["Image 1", "Image 2"],
+        index=0,
+    )
 
 quality = st.selectbox(
     "Output size (square, px)",
@@ -78,7 +94,7 @@ gap_ratio = st.slider(
     1,
     15,
     5,
-    help="Smaller value = items closer together (only used in side-by-side layout).",
+    help="Used only for side-by-side layout.",
 )
 
 outer_padding_ratio = st.slider(
@@ -89,11 +105,22 @@ outer_padding_ratio = st.slider(
     help="Controls margin around the products",
 )
 
-# For overlay, we use a fixed relative offset
-OVERLAY_OFFSET_RATIO = 0.16  # ~16% of inner width
+# Overlay parameters
+OVERLAY_OFFSET_RATIO = 0.16   # distance between centers as % of inner width
+HERO_SCALE_FACTOR = 0.75      # secondary ~= hero * HERO_SCALE_FACTOR (hero layout)
 
 
 # ---------- HELPERS ----------
+
+def make_canvas(bg_mode: str, canvas_size: int) -> Image.Image:
+    """Create base canvas based on background mode."""
+    if bg_mode == "White":
+        return Image.new("RGB", (canvas_size, canvas_size), (255, 255, 255))
+    if bg_mode == "Black":
+        return Image.new("RGB", (canvas_size, canvas_size), (0, 0, 0))
+    # Transparent PNG
+    return Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 0))
+
 
 def load_image_from_file_or_url(file, url):
     """Load image either from uploaded file or URL. File has priority."""
@@ -112,13 +139,13 @@ def load_image_from_file_or_url(file, url):
     return None
 
 
-def maybe_remove_bg(img: Image.Image) -> Image.Image:
-    """Run rembg background removal if available and enabled."""
-    if HAS_REMBG and remove_bg:
+def maybe_remove_bg(img: Image.Image, do_remove: bool) -> Image.Image:
+    """Run rembg background removal for this image if requested."""
+    if HAS_REMBG and do_remove:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        data = buf.getvalue()          # bytes
-        out = remove(data)             # bytes with alpha
+        data = buf.getvalue()
+        out = remove(data)
         return Image.open(io.BytesIO(out)).convert("RGBA")
     return img
 
@@ -126,10 +153,12 @@ def maybe_remove_bg(img: Image.Image) -> Image.Image:
 def paste_with_alpha(bg: Image.Image, fg: Image.Image, x: int, y: int):
     """Safely paste RGBA over RGB/RGBA canvas."""
     if fg.mode == "RGBA" and bg.mode == "RGBA":
-        bg.paste(fg, (x, y), fg)  # preserve transparency
+        bg.paste(fg, (x, y), fg)
     elif fg.mode == "RGBA" and bg.mode == "RGB":
-        # composite over white for RGB canvas
-        tmp = Image.new("RGB", fg.size, (255, 255, 255))
+        tmp = Image.new("RGB", fg.size, (255, 255, 255 if bg.getpixel((0, 0)) != (0, 0, 0) else 0))
+        # Above: cheap check to decide white/black fill is not perfect, but fine.
+        # Simpler & safer:
+        tmp = Image.new("RGB", fg.size, bg.getpixel((0, 0)))
         tmp.paste(fg, mask=fg.split()[-1])
         bg.paste(tmp, (x, y))
     else:
@@ -145,10 +174,7 @@ def combine_side_by_side(
     bg_mode: str,
 ) -> Image.Image:
     """Maximally scale & center two images side by side."""
-    if bg_mode.startswith("White"):
-        canvas = Image.new("RGB", (canvas_size, canvas_size), (255, 255, 255))
-    else:
-        canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 0))
+    canvas = make_canvas(bg_mode, canvas_size)
 
     gap_px = int(canvas_size * (gap_ratio / 100.0))
     padding_px = int(canvas_size * (outer_padding_ratio / 100.0))
@@ -159,7 +185,7 @@ def combine_side_by_side(
     w1, h1 = img1.size
     w2, h2 = img2.size
 
-    # Maximal uniform scale that fits both heights and combined width
+    # Max uniform scale that fits both heights and combined width
     s_height = min(avail_height / float(h1), avail_height / float(h2))
     s_width = (avail_width) / float(w1 + w2) if (w1 + w2) > 0 else s_height
     s = min(s_height, s_width)
@@ -171,11 +197,10 @@ def combine_side_by_side(
     img2_res = img2.resize((new_w2, new_h2), Image.Resampling.LANCZOS)
 
     total_width = new_w1 + gap_px + new_w2
-    # Horizontal centering
     x1 = (canvas_size - total_width) // 2
     x2 = x1 + new_w1 + gap_px
 
-    # Vertically: treat the pair as one box of height = max(h1,h2), center that box
+    # Center the whole pair vertically
     final_h = max(new_h1, new_h2)
     top_y = (canvas_size - final_h) // 2
     bottom_y = top_y + final_h
@@ -189,18 +214,15 @@ def combine_side_by_side(
     return canvas
 
 
-def combine_overlay(
+def combine_overlay_equal(
     img1: Image.Image,
     img2: Image.Image,
     canvas_size: int,
     outer_padding_ratio: int,
     bg_mode: str,
 ) -> Image.Image:
-    """Maximally scale & center two images with slight overlap (img2 in front)."""
-    if bg_mode.startswith("White"):
-        canvas = Image.new("RGB", (canvas_size, canvas_size), (255, 255, 255))
-    else:
-        canvas = Image.new("RGBA", (canvas_size, canvas_size), (255, 255, 255, 0))
+    """Overlay layout with both images at equal scale."""
+    canvas = make_canvas(bg_mode, canvas_size)
 
     padding_px = int(canvas_size * (outer_padding_ratio / 100.0))
     inner_width = canvas_size - 2 * padding_px
@@ -209,12 +231,8 @@ def combine_overlay(
     w1, h1 = img1.size
     w2, h2 = img2.size
 
-    # We'll offset horizontally by a fraction of the inner width
     offset_px = int(inner_width * OVERLAY_OFFSET_RATIO)
 
-    # Max scale so that:
-    # - tallest image fits in height
-    # - widest image + offset still fits in width
     max_h = max(h1, h2)
     max_w = max(w1, w2)
 
@@ -228,21 +246,85 @@ def combine_overlay(
     img1_res = img1.resize((new_w1, new_h1), Image.Resampling.LANCZOS)
     img2_res = img2.resize((new_w2, new_h2), Image.Resampling.LANCZOS)
 
-    # Center point of canvas
     cx = canvas_size // 2
     cy = canvas_size // 2
 
-    # Positions: img1 slightly left/back, img2 slightly right/front
     x1 = cx - new_w1 // 2 - offset_px // 2
     x2 = cx - new_w2 // 2 + offset_px // 2
 
     y1 = cy - new_h1 // 2
     y2 = cy - new_h2 // 2
 
-    # Draw back then front
+    # img1 back, img2 front
     paste_with_alpha(canvas, img1_res, x1, y1)
     paste_with_alpha(canvas, img2_res, x2, y2)
 
+    return canvas
+
+
+def combine_overlay_hero(
+    img1: Image.Image,
+    img2: Image.Image,
+    canvas_size: int,
+    outer_padding_ratio: int,
+    bg_mode: str,
+    hero_is_first: bool,
+) -> Image.Image:
+    """
+    Overlay layout like your KIT + BayFresh example:
+    - One hero pack larger, behind
+    - Secondary pack smaller, in front and to the side
+    """
+    canvas = make_canvas(bg_mode, canvas_size)
+
+    padding_px = int(canvas_size * (outer_padding_ratio / 100.0))
+    inner_width = canvas_size - 2 * padding_px
+    inner_height = canvas_size - 2 * padding_px
+
+    # Decide which is hero
+    if hero_is_first:
+        hero, secondary = img1, img2
+    else:
+        hero, secondary = img2, img1
+
+    w_h, h_h = hero.size
+    w_s, h_s = secondary.size
+
+    offset_px = int(inner_width * OVERLAY_OFFSET_RATIO)
+
+    # secondary scale = HERO_SCALE_FACTOR * hero_scale
+    k = HERO_SCALE_FACTOR
+
+    # Constraints:
+    # 1) height: max(h_hero, k*h_sec) * hero_scale <= inner_height
+    # 2) width: offset + (w_hero + k*w_sec)/2 * hero_scale <= inner_width
+    height_constraint = inner_height / float(max(h_h, k * h_s))
+    width_constraint = (2 * inner_width - 2 * offset_px) / float(w_h + k * w_s)
+
+    s_hero = min(height_constraint, width_constraint)
+    s_sec = s_hero * k
+
+    new_w_h, new_h_h = int(w_h * s_hero), int(h_h * s_hero)
+    new_w_s, new_h_s = int(w_s * s_sec), int(h_s * s_sec)
+
+    hero_res = hero.resize((new_w_h, new_h_h), Image.Resampling.LANCZOS)
+    sec_res = secondary.resize((new_w_s, new_h_s), Image.Resampling.LANCZOS)
+
+    cx = canvas_size // 2
+    cy = canvas_size // 2
+
+    # Hero slightly left/back, secondary right/front (like your example)
+    x_h = cx - new_w_h // 2 - offset_px // 2
+    x_s = cx - new_w_s // 2 + offset_px // 2
+
+    y_h = cy - new_h_h // 2
+    y_s = cy - new_h_s // 2
+
+    # Draw hero first, then secondary on top
+    paste_with_alpha(canvas, hero_res, x_h, y_h)
+    paste_with_alpha(canvas, sec_res, x_s, y_s)
+
+    # If hero was second originally, we need to return in correct order
     return canvas
 
 
@@ -254,15 +336,21 @@ def combine_images(
     outer_padding_ratio: int,
     bg_mode: str,
     layout_mode: str,
+    hero_choice: str,
 ) -> Image.Image:
     """Dispatch to appropriate layout logic."""
     if layout_mode.startswith("Side"):
         return combine_side_by_side(
             img1, img2, canvas_size, gap_ratio, outer_padding_ratio, bg_mode
         )
-    else:
-        return combine_overlay(
+    elif layout_mode.startswith("Overlay (equal)"):
+        return combine_overlay_equal(
             img1, img2, canvas_size, outer_padding_ratio, bg_mode
+        )
+    else:
+        hero_is_first = (hero_choice == "Image 1")
+        return combine_overlay_hero(
+            img1, img2, canvas_size, outer_padding_ratio, bg_mode, hero_is_first
         )
 
 
@@ -278,8 +366,8 @@ if st.button("✨ Generate Combined Image", type="primary"):
         st.error("Please provide both images (via upload or URL).")
     else:
         with st.spinner("Processing images..."):
-            img1_proc = maybe_remove_bg(img1)
-            img2_proc = maybe_remove_bg(img2)
+            img1_proc = maybe_remove_bg(img1, remove_bg_1)
+            img2_proc = maybe_remove_bg(img2, remove_bg_2)
 
             result = combine_images(
                 img1_proc,
@@ -289,13 +377,13 @@ if st.button("✨ Generate Combined Image", type="primary"):
                 outer_padding_ratio,
                 bg_mode,
                 layout_mode,
+                hero_choice,
             )
 
         st.success("Done! Preview below 👇")
         st.image(result, caption="Combined SKU Image", use_column_width=True)
 
         buf = io.BytesIO()
-        # Always PNG (supports transparency if used)
         result.save(buf, format="PNG")
         buf.seek(0)
 
