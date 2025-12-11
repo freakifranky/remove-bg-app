@@ -134,7 +134,7 @@ def combine_images_smart(
     """
     Place two images side-by-side on a square canvas:
     - Both images share the same final height (balanced look)
-    - Centered horizontally & vertically inside the padded area
+    - Centered horizontally & vertically inside the canvas
     - Background can be white or transparent
     """
     if bg_mode.startswith("White"):
@@ -186,12 +186,8 @@ def combine_images_smart(
     x1 = start_x
     x2 = start_x + final_w1 + gap_px
 
-    # Vertical positions: center within the inner padded area
-    inner_top = padding_px
-    inner_bottom = canvas_size - padding_px
-    inner_height = inner_bottom - inner_top
-
-    y_center = inner_top + (inner_height - final_h) // 2
+    # Vertical positions: perfect global vertical centering
+    y_center = (canvas_size - final_h) // 2
     y1 = y_center
     y2 = y_center
 
