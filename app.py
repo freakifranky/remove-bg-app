@@ -108,7 +108,7 @@ if layout_mode == "Overlay (hero + front)":
     st.markdown("### Overlay fine-tuning")
     overlay_distance_ratio = st.slider(
         "Distance between packs (%)",
-        -500, 500, 40,   # <-- updated range
+        -1000, 1000, 40,   # <-- updated range
         help=(
             "Horizontal position of the **front** pack relative to center.\n"
             "0 = centered; positive = move right; negative = move left."
@@ -116,7 +116,7 @@ if layout_mode == "Overlay (hero + front)":
     )
     overlay_drop_ratio = st.slider(
         "Front pack drop (%)",
-        0, 500, 80,      # <-- updated range
+        0, 1000, 80,      # <-- updated range
         help=(
             "How far to drop the front pack down from vertical center.\n"
             "Higher = closer to the bottom of the canvas."
