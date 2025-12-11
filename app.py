@@ -13,11 +13,11 @@ except Exception as e:
     HAS_REMBG = False
     REMBG_ERROR = repr(e)
 
-# ---------- CONSTANTS ----------
+# ---------- DEFAULT CONSTANTS (USED AS SLIDER DEFAULTS) ----------
 
-OVERLAY_OFFSET_RATIO = 0.16          # horizontal separation between hero & secondary
-HERO_SCALE_FACTOR = 0.65             # secondary size ≈ hero_size * 0.65
-SECONDARY_VERT_OFFSET_RATIO = 0.4    # how much lower secondary sits vs hero
+DEFAULT_OVERLAY_OFFSET_RATIO = 0.16        # horizontal separation between packs
+DEFAULT_HERO_SCALE_FACTOR = 0.65           # secondary size ≈ hero_size * 0.65
+DEFAULT_SECONDARY_VERT_OFFSET_RATIO = 0.4  # how much lower secondary sits vs hero
 FOOTER_TEXT = "Vibe-coded by @frnkygabriel"
 
 # ---------- PAGE CONFIG ----------
@@ -110,6 +110,55 @@ outer_padding_ratio = st.slider(
     5,
     help="Controls margin around the products",
 )
+
+# ---------- OVERLAY-SPECIFIC CONTROLS (OPTION B) ----------
+
+# Start with defaults
+overlay_offset_ratio = DEFAULT_OVERLAY_OFFSET_RATIO
+hero_scale_factor = DEFAULT_HERO_SCALE_FACTOR
+secondary_vert_offset_ratio = DEFAULT_SECONDARY_VERT_OFFSET_RATIO
+
+if layout_mode.startswith("Overlay"):
+    st.markdown("**Overlay fine-tuning**")
+
+    col_o1, col_o2 = st.columns(2)
+
+    with col_o1:
+        overlay_offset_ratio = (
+            st.slider(
+                "Horizontal offset between products (% of canvas width)",
+                5,
+                40,
+                int(DEFAULT_OVERLAY_OFFSET_RATIO * 100),
+                help="Higher = more separation left/right between packs.",
+            )
+            / 100.0
+        )
+
+        if layout_mode == "Overlay (hero + secondary)":
+            hero_scale_factor = (
+                st.slider(
+                    "Secondary size vs hero (% of hero size)",
+                    40,
+                    100,
+                    int(DEFAULT_HERO_SCALE_FACTOR * 100),
+                    help="Front pack size relative to the hero pack.",
+                )
+                / 100.0
+            )
+
+    with col_o2:
+        if layout_mode == "Overlay (hero + secondary)":
+            secondary_vert_offset_ratio = (
+                st.slider(
+                    "Secondary vertical drop (% of padding)",
+                    0,
+                    80,
+                    int(DEFAULT_SECONDARY_VERT_OFFSET_RATIO * 100),
+                    help="How much lower the secondary sits relative to the hero baseline.",
+                )
+                / 100.0
+            )
 
 # ---------- HELPERS ----------
 
@@ -217,6 +266,7 @@ def combine_overlay_equal(
     canvas_size: int,
     outer_padding_ratio: int,
     bg_mode: str,
+    overlay_offset_ratio: float,
 ) -> Image.Image:
     """Overlay layout with both images at equal scale."""
     canvas = make_canvas(bg_mode, canvas_size)
@@ -228,7 +278,7 @@ def combine_overlay_equal(
     w1, h1 = img1.size
     w2, h2 = img2.size
 
-    offset_px = int(inner_width * OVERLAY_OFFSET_RATIO)
+    offset_px = int(inner_width * overlay_offset_ratio)
 
     max_h = max(h1, h2)
     max_w = max(w1, w2)
@@ -265,6 +315,9 @@ def combine_overlay_hero(
     outer_padding_ratio: int,
     bg_mode: str,
     hero_is_first: bool,
+    overlay_offset_ratio: float,
+    hero_scale_factor: float,
+    secondary_vert_offset_ratio: float,
 ) -> Image.Image:
     """Overlay layout: hero pack larger & behind, secondary smaller & in front."""
     canvas = make_canvas(bg_mode, canvas_size)
@@ -281,8 +334,8 @@ def combine_overlay_hero(
     w_h, h_h = hero.size
     w_s, h_s = secondary.size
 
-    offset_px = int(inner_width * OVERLAY_OFFSET_RATIO)
-    k = HERO_SCALE_FACTOR
+    offset_px = int(inner_width * overlay_offset_ratio)
+    k = hero_scale_factor
 
     height_constraint = inner_height / float(max(h_h, k * h_s))
     width_constraint = (2 * inner_width - 2 * offset_px) / float(w_h + k * w_s)
@@ -303,7 +356,7 @@ def combine_overlay_hero(
     x_s = cx - new_w_s // 2 + offset_px // 2
 
     y_h = baseline - new_h_h
-    extra_down = int(padding_px * SECONDARY_VERT_OFFSET_RATIO)
+    extra_down = int(padding_px * secondary_vert_offset_ratio)
     sec_bottom = min(canvas_size - padding_px // 4, baseline + extra_down)
     y_s = sec_bottom - new_h_s
 
@@ -322,6 +375,9 @@ def combine_images(
     bg_mode: str,
     layout_mode: str,
     hero_choice: str,
+    overlay_offset_ratio: float,
+    hero_scale_factor: float,
+    secondary_vert_offset_ratio: float,
 ) -> Image.Image:
     """Dispatch to appropriate layout logic."""
     if layout_mode.startswith("Side"):
@@ -330,12 +386,25 @@ def combine_images(
         )
     elif layout_mode.startswith("Overlay (equal)"):
         return combine_overlay_equal(
-            img1, img2, canvas_size, outer_padding_ratio, bg_mode
+            img1,
+            img2,
+            canvas_size,
+            outer_padding_ratio,
+            bg_mode,
+            overlay_offset_ratio,
         )
     else:
         hero_is_first = (hero_choice == "Image 1")
         return combine_overlay_hero(
-            img1, img2, canvas_size, outer_padding_ratio, bg_mode, hero_is_first
+            img1,
+            img2,
+            canvas_size,
+            outer_padding_ratio,
+            bg_mode,
+            hero_is_first,
+            overlay_offset_ratio,
+            hero_scale_factor,
+            secondary_vert_offset_ratio,
         )
 
 # ---------- MAIN ACTION ----------
@@ -362,6 +431,9 @@ if st.button("✨ Generate Combined Image", type="primary"):
                 bg_mode,
                 layout_mode,
                 hero_choice,
+                overlay_offset_ratio,
+                hero_scale_factor,
+                secondary_vert_offset_ratio,
             )
 
         st.success("Done! Preview below 👇")
