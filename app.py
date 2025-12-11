@@ -99,7 +99,7 @@ if layout_mode == "Side-by-side":
 
 outer_padding_ratio = st.slider(
     "Outer padding (left & right, and top & bottom) (% of canvas size)",
-    0, 15, 5,
+    0, 25, 5,   # <-- increased max here
     help="Controls the margin around the packs. 0 = almost full-bleed."
 )
 
@@ -108,7 +108,7 @@ if layout_mode == "Overlay (hero + front)":
     st.markdown("### Overlay fine-tuning")
     overlay_distance_ratio = st.slider(
         "Distance between packs (%)",
-        -200, 200, 40,
+        -300, 300, 40,   # <-- wider range
         help=(
             "Horizontal position of the **front** pack relative to center.\n"
             "0 = centered; positive = move right; negative = move left."
@@ -116,7 +116,7 @@ if layout_mode == "Overlay (hero + front)":
     )
     overlay_drop_ratio = st.slider(
         "Front pack drop (%)",
-        0, 200, 80,
+        0, 300, 80,      # <-- wider range
         help=(
             "How far to drop the front pack down from vertical center.\n"
             "Higher = closer to the bottom of the canvas."
@@ -229,8 +229,8 @@ def combine_overlay(
     Overlay layout:
     - Hero pack centered and scaled to fit within padding.
     - Front pack scaled vs hero height and positioned using sliders:
-        * distance_ratio: horizontal shift from center (-200..200).
-        * drop_ratio: how far to drop from vertical center (0..200).
+        * distance_ratio: horizontal shift from center (-300..300).
+        * drop_ratio: how far to drop from vertical center (0..300).
     """
     canvas = Image.new("RGBA", (canvas_size, canvas_size), bg_color)
 
